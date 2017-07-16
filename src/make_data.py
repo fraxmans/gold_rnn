@@ -2,6 +2,8 @@ import numpy as np
 import math
 import h5py
 
+import sys
+
 train_data = []
 train_label = []
 test_data = []
@@ -10,7 +12,7 @@ raw_data = np.loadtxt("data/GOLD1.csv", dtype=np.str, delimiter=",")
 data = raw_data[:, 2:-1].astype(np.float64)
 
 offset = int(math.ceil(data.shape[0] * 0.9))
-seq_len = 3 
+seq_len = int(sys.argv[1])
 
 #normalization
 max_val = np.amax(data) / 10.0

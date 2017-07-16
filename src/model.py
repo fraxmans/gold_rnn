@@ -17,18 +17,19 @@ def forward(x, seq_len, isTraining):
     x = tf.unstack(x, seq_len, 1)
 
     layers = []
-    n_hiddens = np.array([256, 256, 256, 256])
+    n_hiddens = np.array([256, 256])
     for i in range(n_hiddens.shape[0]):
         cell = lstm_cell(n_hiddens[i])
-        if(isTraining):
+        if(isTraining == True):
             cell = rnn.DropoutWrapper(cell, input_keep_prob=0.8,
                                             output_keep_prob=0.8)
         layers.append(cell)
 
     multi_lstm_cell = rnn.MultiRNNCell(layers)
-    outputs, states = rnn.static_rnn(multi_lstm_cell, x, dtype=tf.float32)
 
+    outputs, states = rnn.static_rnn(multi_lstm_cell, x, dtype=tf.float32)
     fc1 = tf.matmul(outputs[-1], weights1) + biases1
+    fc1 = tf.nn.relu(fc1)
     fc2 = tf.matmul(fc1, weights2) + biases2
 
     return fc2 
@@ -37,7 +38,6 @@ def loss(logits, labels):
     return tf.reduce_mean(tf.squared_difference(logits, labels))
 
 def training(loss):
-    tf.summary.scalar("train_loss", loss)
     optimizer = tf.train.AdamOptimizer(learning_rate)
     global_step = tf.Variable(0, name="global_step", trainable=False)
     train_op = optimizer.minimize(loss, global_step=global_step)
