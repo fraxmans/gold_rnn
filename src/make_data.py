@@ -1,105 +1,100 @@
+import matplotlib
+matplotlib.use("Agg")
 import numpy as np
-import math
+import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
 import h5py
 
+from datetime import datetime
 import sys
+import os
+from multiprocessing import Pool
+from functools import partial
 
-train_data = []
-train_label = []
-test_data = []
-test_label = []
-raw_data = np.loadtxt("data/GOLD1.csv", dtype=np.str, delimiter=",")
-data = raw_data[:, 2:-1].astype(np.float64)
-
-offset = int(math.ceil(data.shape[0] * 0.9))
 seq_len = int(sys.argv[1])
 
-#normalization
-max_val = np.amax(data) / 10.0
-data /= max_val
-label = data[:, -1]
+idx_time = 0
+idx_close = 1
 
-def compute_SMA():
-    SMAs = np.ndarray(data.shape[0])
-    for i in range(seq_len):
-        end = i + 1
-        SMAs[i] = np.mean(data[:end, -1])
-    for i in range(seq_len, data.shape[0]):
-        start = i-seq_len
-        SMAs[i] = np.mean(data[start:i, -1])
-    SMAs = np.reshape(SMAs, [-1, 1])
+def load_raw_data():
+    gold_raw_data = np.loadtxt("data/XAUUSD.csv", delimiter=" ")
+    gold_raw_data = gold_raw_data[:, [0, -2]]
+    gold_raw_data = remove_duplicate(gold_raw_data)
 
-    return SMAs
+    return gold_raw_data
 
-def compute_EMA():
-    EMA_w = 2 / (seq_len + 1)
-    EMAs = np.ndarray(data.shape[0])
+def remove_duplicate(data):
+    
+    _, idx = np.unique(data[:, 0], return_index=True)
+    data = data[idx]
+   
+    return data
 
-    for i in range(data.shape[0]):
-        if(i <= 0):
-            EMAs[i] = data[0, -1]
+def make_data_and_label(gold_raw_data):
+    data = []
+    label = []
+
+    for i in range(seq_len, gold_raw_data.shape[0]):
+        start = i - seq_len
+        end = i
+
+        if(gold_raw_data[end, idx_time] - gold_raw_data[start, idx_time] != seq_len * 60.0):#check data continuity
             continue
 
-        EMAs[i] = data[i, -1] * EMA_w + EMAs[i -1] * (1 - EMA_w)
-    EMAs = np.reshape(EMAs, [-1, 1])
+        if(gold_raw_data[end, idx_time] - gold_raw_data[end-1, idx_time] != 60.0):#check label continuity
+            continue
 
-    return EMAs
+        data.append(gold_raw_data[start:end, idx_close])
+        label.append(gold_raw_data[end, idx_close])
 
-def merge_features(features, start, end):
-    merged = None
+    data = np.array(data)
+    data = np.expand_dims(data, 2)
+    label = np.array(label)
 
-    for feature in features:
-        if(merged is None):
-            merged = feature[start:end]
-        else:
-            merged = np.hstack([merged, feature[start:end]])
-    
-    return merged
+    return data, label
 
-def create_training_data(features):
-    global train_data, train_label
+def unison_shuffled_copies(data, label):
+    assert (data.shape[0] == label.shape[0]) 
 
-    for i in range(seq_len, offset):
-        start = i-seq_len
-        row_data = merge_features(features, start, i) 
-        train_data.append(row_data)
-        train_label.append(label[i])
+    p = np.random.permutation(data.shape[0])
 
-    train_data = np.array(train_data)
-    train_label = np.array(train_label)
-    print(train_data.shape, train_label.shape)
+    return data[p], label[p]
 
-def create_testing_data(features):
-    global test_data, test_label
+def normalization(train_data, train_label, test_data, test_label):
+    max_val = np.amax(train_data)
+    max_val /= 10.0
 
-    for i in range(offset+seq_len, data.shape[0]):
-        start = i-seq_len
-        row_data = merge_features(features, start, i) 
-        test_data.append(row_data)
-        test_label.append(label[i])
+    train_data /= max_val
+    train_label /= max_val
+    test_data /= max_val
+    test_label /= max_val
 
-    test_data = np.array(test_data)
-    test_label = np.array(test_label)
-    print(test_data.shape, test_label.shape)
+    return train_data, train_label, test_data, test_label
+
+def write_HDF5(data, label, name):
+    path = "data/%s.hdf5" % name
+    dataset = h5py.File(path)
+    dataset.create_dataset("data", data=data)
+    dataset.create_dataset("label", data=label)
+    dataset.close()
 
 def main():
-    SMAs = compute_SMA()
-    EMAs = compute_EMA()
+    gold_raw_data = load_raw_data()
 
-    features = [data, SMAs, EMAs]
+    #make train and test dataset
+    data, label = make_data_and_label(gold_raw_data)
+    data, label = unison_shuffled_copies(data, label)
 
-    create_training_data(features)
-    create_testing_data(features)
+    offset = int(0.9 * gold_raw_data.shape[0])
+    train_data, test_data = data[:offset], data[offset:]
+    train_label, test_label = label[:offset], label[offset:] 
+    
+    #normalize
+    train_data, train_label, test_data, test_label = normalization(train_data, train_label, test_data, test_label)
+    
+    #write to hdf5 file
+    write_HDF5(train_data, train_label, "trainset")
+    write_HDF5(test_data, test_label, "testset")
 
-    trainset = h5py.File("data/trainset.hdf5")
-    train_xs = trainset.create_dataset("data", data=train_data)
-    train_ys = trainset.create_dataset("label", data=train_label)
-
-    testset = h5py.File("data/testset.hdf5")
-    test_xs = testset.create_dataset("data", data=test_data)
-    test_ys = testset.create_dataset("label", data=test_label)
-
-    trainset.close()
-    testset.close()
-
-main()
+main()   
+    

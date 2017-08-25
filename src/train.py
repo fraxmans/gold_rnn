@@ -7,6 +7,7 @@ import h5py
 
 import model
 
+prefix = "gold_forex/5min"
 with h5py.File("data/trainset.hdf5") as f:
     train_data = f["data"][()].astype(np.float32)
     train_label = f["label"][()]
